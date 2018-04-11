@@ -1,0 +1,7 @@
+
+*********************************************************************************************
+********NADA DE LO QUE SE ESCRIBE AQUÍ FORMA PARTE DE LOS REQUERIMIENTOS DEL PROYECTO********
+*********************************************************************************************
+
+- Reportar la posición de la mascota en tiempo real vía GPRS y representar el recorrido en un mapa
+- Mini aplicación mobile para configurar el dispositivo y evitar hacerlo con texto plano via SMS
