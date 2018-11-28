@@ -4,22 +4,16 @@
 /******************************************************************************/
 
 
-/**********************************DEFINES*************************************/
-#define	BUZZER_OFF		0
-#define	LOW_BAT				1
-/******************************************************************************/
-
-
 /*********************************DATA TYPES***********************************/
-typedef struct buzzer_config_tag
+typedef struct uart_config_tag
 {
-	uint8_t port;
-	uint8_t pin;
-}buzzer_config_t;
+	uint8_t uart_number;
+	uint32_t baudrate;
+}uart_config_t;
 /******************************************************************************/
 
 
 /*********************************PROTOTYPES***********************************/
-void buzzer_init(buzzer_config_t * buzzer_cfg);
-void buzzer_set(uint8_t status);
+void uart_init(uart_config_t * uart_cfg);
+void uart_send_data(uint8_t uart, uint8_t * data, uint16_t data_size);
 /******************************************************************************/

@@ -12,9 +12,7 @@
 
 /**********************************DEFINES*************************************/
 #define	BUZZER_OFF		0
-#define BUZZER_ON			1
-#define	LOW_BAT				2
-#define	ALERT					3
+#define	LOW_BAT				1
 /******************************************************************************/
 
 
@@ -71,16 +69,12 @@ void task_buzzer(void * a)
 		else
 		{
 			set_pin(buzzer_port, buzzer_pin, 0);
+			vTaskDelay(150 / portTICK_RATE_MS);
+			set_pin(buzzer_port, buzzer_pin, 1);
+			vTaskDelay(150 / portTICK_RATE_MS);
+			set_pin(buzzer_port, buzzer_pin, 0);
+			vTaskDelay(150 / portTICK_RATE_MS);
+			set_pin(buzzer_port, buzzer_pin, 1);
 		}
 	}
-	/*
-	set_pin(buzzer_port, buzzer_pin, 0);
-	vTaskDelay(150 / portTICK_RATE_MS);
-	set_pin(buzzer_port, buzzer_pin, 1);
-	vTaskDelay(150 / portTICK_RATE_MS);
-	set_pin(buzzer_port, buzzer_pin, 0);
-	vTaskDelay(150 / portTICK_RATE_MS);
-	set_pin(buzzer_port, buzzer_pin, 1);
-	vTaskDelay(5000 / portTICK_RATE_MS);
-	*/
 }

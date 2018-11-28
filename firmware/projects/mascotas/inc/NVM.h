@@ -3,23 +3,17 @@
 #include <stdint.h>
 /******************************************************************************/
 
-
 /**********************************DEFINES*************************************/
-#define	BUZZER_OFF		0
-#define	LOW_BAT				1
-/******************************************************************************/
-
-
-/*********************************DATA TYPES***********************************/
-typedef struct buzzer_config_tag
-{
-	uint8_t port;
-	uint8_t pin;
-}buzzer_config_t;
+#define	STATUS		0
+#define	LATITUDE	1
+#define LONGITUDE	2
+#define	NUMBER		3
+#define	RADIUS		4
 /******************************************************************************/
 
 
 /*********************************PROTOTYPES***********************************/
-void buzzer_init(buzzer_config_t * buzzer_cfg);
-void buzzer_set(uint8_t status);
+void nvm_init(void);
+uint32_t nvm_get(uint8_t item);
+void nvm_set(uint8_t item, uint32_t value);
 /******************************************************************************/
