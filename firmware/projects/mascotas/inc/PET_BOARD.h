@@ -3,7 +3,7 @@
 #define	BASEBOARD	0
 #define	TDII			1
 
-#define	PET_BOARD	BASEBOARD
+#define	PET_BOARD	TDII
 
 #if PET_BOARD == BASEBOARD
 	#define	RGB_RED_PORT		2
