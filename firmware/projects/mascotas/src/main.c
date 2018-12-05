@@ -1,6 +1,7 @@
 
 /**********************************INCLUDES************************************/
 #include <string.h>
+#include <stdlib.h>
 #include "../inc/FreeRTOSConfig.h"
 #include "FreeRTOS.h"
 #include "task.h"
@@ -12,6 +13,7 @@
 #include "../inc/BUZZER.h"
 #include "../inc/UART.h"
 #include "../inc/NVM.h"
+#include "../inc/GPS.h"
 //#include "../inc/ADC.h"
 /******************************************************************************/
 
@@ -33,9 +35,11 @@ typedef struct response_tag
 #define	WAIT_TEXT_MODE		4
 #define NETWORK_REG				5
 #define	WAIT_NETWORK_REG	6
-#define CHANGE_BAND				7
-#define WAIT_CHANGE_BAND	8
-#define NEXT							9
+#define	READ_SMS					7
+#define	WAIT_READ_SMS			8
+#define DELETE_SMS				9
+#define	WAIT_DELETE_SMS		10
+#define NEXT							11
 
 #define	WAIT_GSM_INIT			0
 #define	POWER_ON					1
@@ -44,24 +48,43 @@ typedef struct response_tag
 #define WAIT_CHECK_SIGNAL	4
 #define	GET_COORDINATE		5
 #define	WAIT_COORDINATE		6
+
+#define	OFFLINE						0
+#define	ONLINE						1
+
+#define	SZ_DATA_LOADED		0x12345678
 /******************************************************************************/
 
 
 /*********************************PROTOTYPES***********************************/
 static void initHardware(void);
-static void task(void * a);
 void task_rgb(void * a);
 void task_buzzer(void * a);
 //static void task_adc(void * a);
 static void task_gsm(void * a);
 static void task_sim808_receive(void * a);
 static void task_gps(void * a);
+static void task_coordinates(void * a);
+static void task_led(void * a);
+
+static void store_phone_number(uint8_t * data);
+static void store_sms_data(response_t response);
 /******************************************************************************/
 
 
 /*********************************VARIABLES************************************/
 const uint32_t OscRateIn = 12000000;
 const uint32_t RTCOscRateIn = 32768;
+
+double sz_latitude;
+double sz_longitude;
+uint32_t sz_radius;
+uint32_t phone_number;
+uint32_t device_status;
+
+uint8_t sms_check;
+uint8_t gps_status;
+uint8_t gsm_status;
 
 xQueueHandle queue_rgb;
 xQueueHandle queue_buzzer;
@@ -73,6 +96,7 @@ xQueueHandle queue_uart_2_tx;
 xQueueHandle queue_uart_2_rx;
 xQueueHandle queue_adc;
 xQueueHandle queue_sim808;
+xQueueHandle queue_coordinates;
 
 xSemaphoreHandle mutex_sim808;
 xSemaphoreHandle binary_sim808;
@@ -90,19 +114,21 @@ int main(void)
 	queue_uart_2_rx = xQueueCreate(100, sizeof(uint8_t));
 	//queue_adc = xQueueCreate(1, sizeof(uint16_t));
 	queue_sim808 = xQueueCreate(5, sizeof(response_t));
+	queue_coordinates = xQueueCreate(1, sizeof(coordinate_t));
 
 	mutex_sim808 = xSemaphoreCreateMutex();
 	binary_sim808 = xSemaphoreCreateCounting(1,0);
 
 	initHardware();
 
-	xTaskCreate(task, (const char *)"task", configMINIMAL_STACK_SIZE*2, 0, tskIDLE_PRIORITY+1, 0);
 	xTaskCreate(task_rgb, (const char *)"task_rgb", configMINIMAL_STACK_SIZE*2, 0, tskIDLE_PRIORITY+1, 0);
 	xTaskCreate(task_buzzer, (const char *)"task_buzzer", configMINIMAL_STACK_SIZE*2, 0, tskIDLE_PRIORITY+1, 0);
 	//xTaskCreate(task_adc, (const char *)"task_adc", configMINIMAL_STACK_SIZE*2, 0, tskIDLE_PRIORITY+1, 0);
 	xTaskCreate(task_gsm, (const char *)"task_gsm", configMINIMAL_STACK_SIZE*2, 0, tskIDLE_PRIORITY+1, 0);
 	xTaskCreate(task_sim808_receive, (const char *)"task_sim808_receive", configMINIMAL_STACK_SIZE*2, 0, tskIDLE_PRIORITY+1, 0);
 	xTaskCreate(task_gps, (const char *)"task_gps", configMINIMAL_STACK_SIZE*2, 0, tskIDLE_PRIORITY+1, 0);
+	xTaskCreate(task_coordinates, (const char *)"task_coordinates", configMINIMAL_STACK_SIZE*2, 0, tskIDLE_PRIORITY+1, 0);
+	xTaskCreate(task_led, (const char *)"task_led", configMINIMAL_STACK_SIZE*2, 0, tskIDLE_PRIORITY+1, 0);
 
 	vTaskStartScheduler();
 
@@ -149,89 +175,48 @@ static void initHardware(void)
 }
 
 
-static void task(void * a)
+static void task_coordinates(void * a)
 {
-	//static uint8_t colour=0;
-	//static uint8_t data;
-
-	/*
+	static coordinate_t new_coordinate;
+	static uint32_t distance;
 	static char aux[50];
-	static uint32_t reg;
-	*/
 
 	while (1)
 	{
-		vTaskDelay(5000 / portTICK_RATE_MS);
-		//uart_send_data(UART_COMM, (uint8_t*)"ATE0\r", 5);
-		//vTaskDelay(3000 / portTICK_RATE_MS);
+		xQueueReceive(queue_coordinates, &new_coordinate, portMAX_DELAY);
 
-		/*
-		vTaskDelay(5000 / portTICK_RATE_MS);
-		adc_soc();
-		*/
+		uart_send_data(2, (uint8_t*)"Latitud: ", strlen("Latitud: "));
+		uart_send_data(2, new_coordinate.latitude_string, strlen((char*)new_coordinate.latitude_string));
+		uart_send_data(2, (uint8_t*)"\n", 1);
 
-		/*
-		nvm_set(STATUS, 21122112);
-		nvm_set(LATITUDE, 604604);
-		nvm_set(LONGITUDE, 15101510);
-		nvm_set(NUMBER, 27052705);
-		nvm_set(RADIUS, 12041204);
-		uart_send_data(UART_DEBUG, (uint8_t*)"WROTE!\n", strlen("WROTE!\n"));
-		*/
+		uart_send_data(2, (uint8_t*)"Longitud: ", strlen("Longitud: "));
+		uart_send_data(2, new_coordinate.longitude_string, strlen((char*)new_coordinate.longitude_string));
+		uart_send_data(2, (uint8_t*)"\n\n", 2);
 
-		/*
-		reg = nvm_get(STATUS);
-		sprintf(aux, "Status: %lu\n", reg);
-		uart_send_data(UART_DEBUG, (uint8_t*)aux, strlen(aux));
+		uart_send_data(2, (uint8_t*)"\n", 1);
 
-		reg = nvm_get(LATITUDE);
-		sprintf(aux, "Latitude: %lu\n", reg);
-		uart_send_data(UART_DEBUG, (uint8_t*)aux, strlen(aux));
-
-		reg = nvm_get(LONGITUDE);
-		sprintf(aux, "Longitude: %lu\n", reg);
-		uart_send_data(UART_DEBUG, (uint8_t*)aux, strlen(aux));
-
-		reg = nvm_get(NUMBER);
-		sprintf(aux, "Number: %lu\n", reg);
-		uart_send_data(UART_DEBUG, (uint8_t*)aux, strlen(aux));
-
-		reg = nvm_get(RADIUS);
-		sprintf(aux, "Radius: %lu\n\n", reg);
-		uart_send_data(UART_DEBUG, (uint8_t*)aux, strlen(aux));
-		*/
-
-		/*
-		buzzer_set(LOW_BAT);
-		vTaskDelay(1000 / portTICK_RATE_MS);
-		*/
-
-		/*
-		xQueueReceive(queue_uart_1_rx, &data, portMAX_DELAY);
-		uart_send_data(UART_COMM, &data, 1);
-		*/
-
-		/*
-		rgb_set(colour);
-
-		colour++;
-
-		if (colour == 8)
+		if (device_status == SZ_DATA_LOADED)
 		{
-			colour=0;
+			sprintf(aux, "SZ Lat: %lf\n", sz_latitude);
+			uart_send_data(UART_DEBUG, (uint8_t*)aux, strlen(aux));
+
+			sprintf(aux, "SZ Lon: %lf\n", sz_longitude);
+			uart_send_data(UART_DEBUG, (uint8_t*)aux, strlen(aux));
+
+			sprintf(aux, "Punto Lat: %lf\n", new_coordinate.latitude);
+			uart_send_data(UART_DEBUG, (uint8_t*)aux, strlen(aux));
+
+			sprintf(aux, "Punto Lon: %lf\n", new_coordinate.longitude);
+			uart_send_data(UART_DEBUG, (uint8_t*)aux, strlen(aux));
+
+			distance = calculate_distance(sz_latitude, sz_longitude, new_coordinate.latitude, new_coordinate.longitude);
+
+			sprintf(aux, "Distancia: %lu\n\n", distance);
+			uart_send_data(UART_DEBUG, (uint8_t*)aux, strlen(aux));
 		}
 
-		if (colour%2)
-		{
-			buzzer_set(BUZZER_ON);
-		}
-		else
-		{
-			buzzer_set(BUZZER_OFF);
-		}
-
-		vTaskDelay(2000 / portTICK_RATE_MS);
-		*/
+		// Luego comparar el punto recibido contra una zona segura hardcodeada
+		// Si la distancia es mayor al radio (hardcodeado), verificar si hay señal GSM, si hay, encolar el mensaje a enviar
 	}
 }
 
@@ -240,7 +225,6 @@ static void task_gsm(void * a)
 {
 	static uint8_t status=0;
 	static response_t last_response;
-	static uint8_t reg_retries=0;
 
 	while (1)
 	{
@@ -312,7 +296,6 @@ static void task_gsm(void * a)
 				vTaskDelay(10 / portTICK_RATE_MS);
 				xQueueReset(queue_sim808);
 				uart_send_data(UART_COMM, (uint8_t*)"AT+CREG?\r", strlen("AT+CREG?\r"));
-				//uart_send_data(UART_COMM, (uint8_t*)"AT+CSQ\r", strlen("AT+CSQ\r"));
 				status = WAIT_NETWORK_REG;
 				break;
 
@@ -325,23 +308,14 @@ static void task_gsm(void * a)
 
 					if (!memcmp(last_response.data, "+CREG: 0,1", 10))
 					{
-						reg_retries=0;
+						gsm_status=ONLINE;
 						uart_send_data(UART_DEBUG, (uint8_t*)"Registrado a la Red!\n", strlen("Registrado a la Red!\n"));
-						status = NEXT;
+						status = READ_SMS;
 					}
 					else
 					{
 						vTaskDelay(5000 / portTICK_RATE_MS);
-						reg_retries++;
-						if (reg_retries > 10)
-						{
-							status=CHANGE_BAND;
-							reg_retries=0;
-						}
-						else
-						{
-							status = NETWORK_REG;
-						}
+						status = NETWORK_REG;
 					}
 				}
 				else
@@ -352,33 +326,75 @@ static void task_gsm(void * a)
 				xSemaphoreGive(mutex_sim808);
 				break;
 
-			case CHANGE_BAND:
+			case READ_SMS:
 				xSemaphoreTake(mutex_sim808, portMAX_DELAY);
 				vTaskDelay(10 / portTICK_RATE_MS);
 				xQueueReset(queue_sim808);
-				uart_send_data(UART_COMM, (uint8_t*)"AT+CBAND=\"GSM850_MODE\"\r", strlen("AT+CBAND=\"GSM850_MODE\"\r"));
-				status = WAIT_CHANGE_BAND;
+				sms_check=1;
+				uart_send_data(UART_COMM, (uint8_t*)"AT+CMGL=\"ALL\"\r", strlen("AT+CMGL=\"ALL\"\r"));
+				status = WAIT_READ_SMS;
 				break;
 
-			case WAIT_CHANGE_BAND:
+			case WAIT_READ_SMS:
 				if (xQueueReceive(queue_sim808, &last_response, 5000) == pdTRUE)
 				{
-					if (!memcmp(last_response.data, "OK", 2))
+					if (!memcmp(last_response.data, "+CMGL: 1", strlen("+CMGL: 1")))
 					{
-						uart_send_data(UART_DEBUG, (uint8_t*)"Cambio de banda!\n", strlen("Cambio de banda!\n"));
-						status = NETWORK_REG;
+						store_phone_number(last_response.data);
+
+						xQueueReceive(queue_sim808, &last_response, portMAX_DELAY);
+						store_sms_data(last_response);
+						status = DELETE_SMS;
 					}
+					// Tambien se debe verificar si se recibio el mensaje de borrar los datos de la EEPROM y actuar en consecuencia
 					else
 					{
-						status = CHANGE_BAND;
+						uart_send_data(UART_DEBUG, (uint8_t*)"NO HAY!\n", strlen("NO HAY!\n"));
+						vTaskDelay(5000 / portTICK_RATE_MS); // SOLO POR AHORA
+						status = READ_SMS; // SOLO POR AHORA
 					}
 				}
 				else
 				{
-					status = CHANGE_BAND;
+					vTaskDelay(5000 / portTICK_RATE_MS);
+					status = READ_SMS;
 				}
 				xSemaphoreGive(mutex_sim808);
 				break;
+
+			case DELETE_SMS:
+				xSemaphoreTake(mutex_sim808, portMAX_DELAY);
+				vTaskDelay(10 / portTICK_RATE_MS);
+				xQueueReset(queue_sim808);
+				uart_send_data(UART_COMM, (uint8_t*)"AT+CMGDA=\"DEL ALL\"\r", strlen("AT+CMGDA=\"DEL ALL\"\r"));
+				status = WAIT_DELETE_SMS;
+				break;
+
+			case WAIT_DELETE_SMS:
+				if (xQueueReceive(queue_sim808, &last_response, 5000) == pdTRUE)
+				{
+					if (!memcmp(last_response.data, "OK", 2))
+					{
+						uart_send_data(UART_DEBUG, (uint8_t*)"SMS Borrado!\n", strlen("SMS Borrado!\n"));
+						vTaskDelay(5000 / portTICK_RATE_MS);
+						status = READ_SMS;
+					}
+					else
+					{
+						status = DELETE_SMS;
+					}
+				}
+				else
+				{
+					status = DELETE_SMS;
+				}
+				xSemaphoreGive(mutex_sim808);
+				break;
+
+			// Crear los estados que se fijan si hay algun SMS pendiente para enviar
+			// Luego mandarlo a un estado donde chequea si sigue habiendo señal GSM
+			// Actualizar la variable gsm_status segun corresponda
+			// Luego volver al estado que chequea si se recibio un SMS
 
 			case NEXT:
 				vTaskDelay(5000 / portTICK_RATE_MS);
@@ -433,7 +449,7 @@ static void task_gps(void * a)
 
 			case CHECK_SIGNAL:
 				xSemaphoreTake(mutex_sim808, portMAX_DELAY);
-				vTaskDelay(10 / portTICK_RATE_MS);
+				vTaskDelay(100 / portTICK_RATE_MS);
 				xQueueReset(queue_sim808);
 				uart_send_data(UART_COMM, (uint8_t*)"AT+CGPSSTATUS?\r", strlen("AT+CGPSSTATUS?\r"));
 				status = WAIT_CHECK_SIGNAL;
@@ -442,9 +458,14 @@ static void task_gps(void * a)
 			case WAIT_CHECK_SIGNAL:
 				if (xQueueReceive(queue_sim808, &last_response, 5000) == pdTRUE)
 				{
+					uart_send_data(UART_DEBUG, (uint8_t*)"RTA: ", 5);
+					uart_send_data(UART_DEBUG, last_response.data, last_response.size);
+					uart_send_data(UART_DEBUG, (uint8_t*)"\n", 1);
+
 					if (!memcmp(last_response.data, "+CGPSSTATUS: Location 3D Fix", strlen("+CGPSSTATUS: Location 3D Fix")))
 					{
 						uart_send_data(UART_DEBUG, (uint8_t*)"GPS Obtenido!\n", strlen("GPS Obtenido!\n"));
+						gps_status = ONLINE;
 						status = GET_COORDINATE;
 					}
 					else
@@ -472,10 +493,15 @@ static void task_gps(void * a)
 				{
 					if (!memcmp(last_response.data, "+CGPSINF:", strlen("+CGPSINF:")))
 					{
-						uart_send_data(UART_DEBUG, (uint8_t*)"COORD: ", strlen("COORD: "));
-						uart_send_data(UART_DEBUG, last_response.data, last_response.size);
-						uart_send_data(UART_DEBUG, (uint8_t*)"\n", 1);
-						status = GET_COORDINATE;
+						if (parse_frame(last_response.data, last_response.size))
+						{
+							status = GET_COORDINATE;
+						}
+						else
+						{
+							gps_status = OFFLINE;
+							status = CHECK_SIGNAL;
+						}
 					}
 					else
 					{
@@ -539,7 +565,25 @@ static void task_sim808_receive(void * a)
 				if (data == 0x0A)
 				{
 					index=0;
-					status=0;
+
+					if (sms_check)
+					{
+						if (last_response.size != 2)
+						{
+							status=2;
+							last_response.size=0;
+						}
+						else
+						{
+							status=0;
+						}
+					}
+					else
+					{
+						status=0;
+					}
+
+					sms_check=0;
 				}
 				break;
 		}
@@ -562,3 +606,172 @@ static void task_adc(void * a)
 }
 */
 
+
+static void store_phone_number(uint8_t * data)
+{
+	static uint8_t index=0;
+	static uint8_t i=0;
+	static uint8_t phone_number_string[11];
+
+	/* index=1 para que no capture el '+' inicial */
+	index=1;
+
+	while(data[index] != '+')
+	{
+		index++;
+	}
+
+	index+=3;
+
+	for(i=0 ; i<10 ; i++)
+	{
+		phone_number_string[i]=data[index];
+		index++;
+	}
+
+	phone_number_string[i]='\0';
+
+	uart_send_data(UART_DEBUG, (uint8_t*)"Numero: ", strlen("Numero: "));
+	uart_send_data(UART_DEBUG, phone_number_string, strlen((char*)phone_number_string));
+	uart_send_data(UART_DEBUG, (uint8_t*)"\n", 1);
+
+	phone_number = strtol((char*)phone_number_string, NULL, 10);
+	nvm_set(NUMBER, phone_number);
+}
+
+
+static void store_sms_data(response_t response)
+{
+	static uint8_t i=0;
+	static uint8_t index=0;
+	static uint8_t commas=0;
+	static uint8_t latitude_string[20];
+	static uint8_t longitude_string[20];
+	static uint8_t radius_string[20];
+	static char aux[50];
+	static double aux_double;
+	static uint32_t aux_reg;
+
+	while(i < response.size)
+	{
+		if (response.data[i]==',')
+		{
+			commas++;
+		}
+
+		i++;
+	}
+
+	if (commas==2)
+	{
+		i=0;
+
+		while(response.data[i] != ',')
+		{
+			latitude_string[index]=response.data[i];
+			index++;
+			i++;
+		}
+
+		latitude_string[index]='\0';
+		index=0;
+		i++;
+
+		while(response.data[i] != ',')
+		{
+			longitude_string[index]=response.data[i];
+			index++;
+			i++;
+		}
+
+		longitude_string[index]='\0';
+		index=0;
+		i++;
+
+		while(i < response.size)
+		{
+			radius_string[index]=response.data[i];
+			index++;
+			i++;
+		}
+
+		radius_string[index]='\0';
+	}
+
+	i=0;
+	index=0;
+	commas=0;
+
+	sz_radius = strtol((char*)radius_string, NULL, 10);
+	nvm_set(RADIUS, sz_radius);
+
+	aux_double = strtod((char*)latitude_string, NULL);
+	sz_latitude = aux_double;
+
+	if(aux_double < 0)
+	{
+		aux_double *= (-1);
+	}
+
+	aux_double *= 10000;
+	aux_reg = (uint32_t) aux_double;
+	nvm_set(LATITUDE, aux_reg);
+
+	sprintf(aux, "Lat prog: %lf\n", sz_latitude);
+	uart_send_data(UART_DEBUG, (uint8_t*)aux, strlen(aux));
+
+	sprintf(aux, "Lat NVM: %lu\n", aux_reg);
+	uart_send_data(UART_DEBUG, (uint8_t*)aux, strlen(aux));
+
+	aux_double = strtod((char*)longitude_string, NULL);
+	sz_longitude = aux_double;
+
+	if(aux_double < 0)
+	{
+		aux_double *= (-1);
+	}
+
+	aux_double *= 10000;
+	aux_reg = (uint32_t) aux_double;
+	nvm_set(LONGITUDE, aux_reg);
+
+	sprintf(aux, "Lon prog: %lf\n", sz_longitude);
+	uart_send_data(UART_DEBUG, (uint8_t*)aux, strlen(aux));
+
+	sprintf(aux, "Lon NVM: %lu\n", aux_reg);
+	uart_send_data(UART_DEBUG, (uint8_t*)aux, strlen(aux));
+
+	device_status = SZ_DATA_LOADED;
+	nvm_set(STATUS, device_status);
+}
+
+
+
+static void task_led(void * a)
+{
+	while (1)
+	{
+		vTaskDelay(1000 / portTICK_RATE_MS);
+
+		if (gps_status == OFFLINE && gsm_status == OFFLINE)
+		{
+			rgb_set(RED);
+		}
+		else if (gps_status == OFFLINE)
+		{
+			rgb_set(BLUE);
+		}
+		else if (gsm_status == OFFLINE)
+		{
+			rgb_set(YELLOW);
+		}
+		else if (device_status != SZ_DATA_LOADED)
+		{
+			rgb_set(MAGENTA);
+		}
+		else
+		{
+			rgb_set(GREEN);
+		}
+	}
+}

@@ -19,6 +19,8 @@
 #define LONGITUDE	2
 #define	NUMBER		3
 #define	RADIUS		4
+
+#define	SZ_DATA_LOADED		0x12345678
 /******************************************************************************/
 
 
@@ -28,9 +30,38 @@ uint32_t nvm_get(uint8_t item);
 void nvm_set(uint8_t item, uint32_t value);
 /******************************************************************************/
 
+
+/*********************************VARIABLES************************************/
+extern double sz_latitude;
+extern double sz_longitude;
+extern uint32_t sz_radius;
+extern uint32_t phone_number;
+extern uint32_t device_status;
+/******************************************************************************/
+
 void nvm_init(void)
 {
+	uint32_t aux_reg;
+
 	PCONP |= 0x01<<9;
+
+	device_status = nvm_get(STATUS);
+
+	if (device_status == SZ_DATA_LOADED)
+	{
+		aux_reg = nvm_get(LATITUDE);
+		sz_latitude = (double)aux_reg;
+		sz_latitude /= 10000;
+		sz_latitude *= (-1);
+
+		aux_reg = nvm_get(LONGITUDE);
+		sz_longitude = (double)aux_reg;
+		sz_longitude /= 10000;
+		sz_longitude *= (-1);
+
+		sz_radius = nvm_get(RADIUS);
+		phone_number = nvm_get(NUMBER);
+	}
 }
 
 

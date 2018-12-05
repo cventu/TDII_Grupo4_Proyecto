@@ -12,12 +12,12 @@
 
 /**********************************DEFINES*************************************/
 #define OFF			0
-#define BLUE		1
-#define	GREEN		2
+#define BLUE		1 // NO GPS
+#define	GREEN		2 // OK
 #define	CYAN		3
-#define	RED			4
-#define	MAGENTA	5
-#define YELLOW	6
+#define	RED			4 // NO GSM AND NO GPS
+#define	MAGENTA	5 // NO SAFE ZONE DATA
+#define YELLOW	6 // NO GSM
 #define WHITE		7
 /******************************************************************************/
 

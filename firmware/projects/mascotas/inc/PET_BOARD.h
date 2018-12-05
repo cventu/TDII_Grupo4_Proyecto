@@ -23,9 +23,9 @@
 	#define	RGB_RED_PORT		0
 	#define RGB_RED_PIN			2
 	#define	RGB_GREEN_PORT	0
-	#define RGB_GREEN_PIN		3
+	#define RGB_GREEN_PIN		22
 	#define	RGB_BLUE_PORT		0
-	#define	RGB_BLUE_PIN		22
+	#define	RGB_BLUE_PIN		3
 	#define BUZZER_PORT			2
 	#define	BUZZER_PIN			0
 	#define	UART_DEBUG			2
