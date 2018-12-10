@@ -39,7 +39,11 @@ typedef struct response_tag
 #define	WAIT_READ_SMS			8
 #define DELETE_SMS				9
 #define	WAIT_DELETE_SMS		10
-#define NEXT							11
+#define SEND_SMS_1				11
+#define WAIT_SEND_SMS_1		12
+#define	SEND_SMS_2				13
+#define	WAIT_SEND_SMS_2		14
+#define NEXT							15
 
 #define	WAIT_GSM_INIT			0
 #define	POWER_ON					1
@@ -79,12 +83,13 @@ const uint32_t RTCOscRateIn = 32768;
 double sz_latitude;
 double sz_longitude;
 uint32_t sz_radius;
-uint32_t phone_number;
+uint8_t phone_number[14];
 uint32_t device_status;
 
 uint8_t sms_check;
 uint8_t gps_status;
 uint8_t gsm_status;
+uint8_t sms_hold;
 
 xQueueHandle queue_rgb;
 xQueueHandle queue_buzzer;
@@ -97,6 +102,7 @@ xQueueHandle queue_uart_2_rx;
 xQueueHandle queue_adc;
 xQueueHandle queue_sim808;
 xQueueHandle queue_coordinates;
+xQueueHandle queue_sms;
 
 xSemaphoreHandle mutex_sim808;
 xSemaphoreHandle binary_sim808;
@@ -115,6 +121,7 @@ int main(void)
 	//queue_adc = xQueueCreate(1, sizeof(uint16_t));
 	queue_sim808 = xQueueCreate(5, sizeof(response_t));
 	queue_coordinates = xQueueCreate(1, sizeof(coordinate_t));
+	queue_sms = xQueueCreate(1, sizeof(coordinate_t));
 
 	mutex_sim808 = xSemaphoreCreateMutex();
 	binary_sim808 = xSemaphoreCreateCounting(1,0);
@@ -178,45 +185,32 @@ static void initHardware(void)
 static void task_coordinates(void * a)
 {
 	static coordinate_t new_coordinate;
-	static uint32_t distance;
+	static double distance;
 	static char aux[50];
 
 	while (1)
 	{
 		xQueueReceive(queue_coordinates, &new_coordinate, portMAX_DELAY);
 
-		uart_send_data(2, (uint8_t*)"Latitud: ", strlen("Latitud: "));
-		uart_send_data(2, new_coordinate.latitude_string, strlen((char*)new_coordinate.latitude_string));
-		uart_send_data(2, (uint8_t*)"\n", 1);
-
-		uart_send_data(2, (uint8_t*)"Longitud: ", strlen("Longitud: "));
-		uart_send_data(2, new_coordinate.longitude_string, strlen((char*)new_coordinate.longitude_string));
-		uart_send_data(2, (uint8_t*)"\n\n", 2);
-
-		uart_send_data(2, (uint8_t*)"\n", 1);
-
 		if (device_status == SZ_DATA_LOADED)
 		{
-			sprintf(aux, "SZ Lat: %lf\n", sz_latitude);
+			sprintf(aux, "Latitud: %lf\n", new_coordinate.latitude);
 			uart_send_data(UART_DEBUG, (uint8_t*)aux, strlen(aux));
 
-			sprintf(aux, "SZ Lon: %lf\n", sz_longitude);
-			uart_send_data(UART_DEBUG, (uint8_t*)aux, strlen(aux));
-
-			sprintf(aux, "Punto Lat: %lf\n", new_coordinate.latitude);
-			uart_send_data(UART_DEBUG, (uint8_t*)aux, strlen(aux));
-
-			sprintf(aux, "Punto Lon: %lf\n", new_coordinate.longitude);
+			sprintf(aux, "Longitud: %lf\n", new_coordinate.longitude);
 			uart_send_data(UART_DEBUG, (uint8_t*)aux, strlen(aux));
 
 			distance = calculate_distance(sz_latitude, sz_longitude, new_coordinate.latitude, new_coordinate.longitude);
 
-			sprintf(aux, "Distancia: %lu\n\n", distance);
+			sprintf(aux, "Distancia: %lf\n\n", distance);
 			uart_send_data(UART_DEBUG, (uint8_t*)aux, strlen(aux));
-		}
 
-		// Luego comparar el punto recibido contra una zona segura hardcodeada
-		// Si la distancia es mayor al radio (hardcodeado), verificar si hay señal GSM, si hay, encolar el mensaje a enviar
+			if (distance > sz_radius && gsm_status == ONLINE && sms_hold == 0)
+			{
+				sms_hold=1;
+				xQueueSend(queue_sms, &new_coordinate, 0);
+			}
+		}
 	}
 }
 
@@ -225,6 +219,8 @@ static void task_gsm(void * a)
 {
 	static uint8_t status=0;
 	static response_t last_response;
+	static coordinate_t coord;
+	static char aux[100];
 
 	while (1)
 	{
@@ -346,17 +342,13 @@ static void task_gsm(void * a)
 						store_sms_data(last_response);
 						status = DELETE_SMS;
 					}
-					// Tambien se debe verificar si se recibio el mensaje de borrar los datos de la EEPROM y actuar en consecuencia
 					else
 					{
-						uart_send_data(UART_DEBUG, (uint8_t*)"NO HAY!\n", strlen("NO HAY!\n"));
-						vTaskDelay(5000 / portTICK_RATE_MS); // SOLO POR AHORA
-						status = READ_SMS; // SOLO POR AHORA
+						status = SEND_SMS_1;
 					}
 				}
 				else
 				{
-					vTaskDelay(5000 / portTICK_RATE_MS);
 					status = READ_SMS;
 				}
 				xSemaphoreGive(mutex_sim808);
@@ -375,9 +367,8 @@ static void task_gsm(void * a)
 				{
 					if (!memcmp(last_response.data, "OK", 2))
 					{
-						uart_send_data(UART_DEBUG, (uint8_t*)"SMS Borrado!\n", strlen("SMS Borrado!\n"));
-						vTaskDelay(5000 / portTICK_RATE_MS);
-						status = READ_SMS;
+						uart_send_data(UART_DEBUG, (uint8_t*)"SMS Borrado!\n\n", strlen("SMS Borrado!\n\n"));
+						status = SEND_SMS_1;
 					}
 					else
 					{
@@ -391,13 +382,76 @@ static void task_gsm(void * a)
 				xSemaphoreGive(mutex_sim808);
 				break;
 
-			// Crear los estados que se fijan si hay algun SMS pendiente para enviar
-			// Luego mandarlo a un estado donde chequea si sigue habiendo señal GSM
-			// Actualizar la variable gsm_status segun corresponda
-			// Luego volver al estado que chequea si se recibio un SMS
+			case SEND_SMS_1:
+				if (xQueueReceive(queue_sms, &coord, 0) == pdTRUE)
+				{
+
+					xSemaphoreTake(mutex_sim808, portMAX_DELAY);
+					vTaskDelay(10 / portTICK_RATE_MS);
+					xQueueReset(queue_sim808);
+					sprintf(aux, "AT+CMGS=\"%s\"\r",phone_number);
+					uart_send_data(UART_COMM, (uint8_t*)aux, strlen(aux));
+					status = WAIT_SEND_SMS_1;
+
+
+					/*
+					uart_send_data(UART_DEBUG, (uint8_t*)"MANDA!\n\n", strlen("MANDA!\n\n"));
+					status=NEXT;
+					*/
+				}
+				else
+				{
+					vTaskDelay(3000 / portTICK_RATE_MS);
+					status = READ_SMS;
+				}
+				break;
+
+			case WAIT_SEND_SMS_1:
+				if (xQueueReceive(queue_sim808, &last_response, 10000) == pdTRUE)
+				{
+					if (!memcmp(last_response.data, ">", 1))
+					{
+						status = SEND_SMS_2;
+					}
+				}
+				xSemaphoreGive(mutex_sim808);
+				break;
+
+			case SEND_SMS_2:
+				xSemaphoreTake(mutex_sim808, portMAX_DELAY);
+				vTaskDelay(10 / portTICK_RATE_MS);
+				xQueueReset(queue_sim808);
+				sprintf(aux,"Ubicacion mascota:\n\nLatitud: %lf\nLongitud: %lf\x1a", coord.latitude, coord.longitude);
+				uart_send_data(UART_COMM, (uint8_t*)aux, strlen(aux));
+				status = WAIT_SEND_SMS_2;
+				break;
+
+			case WAIT_SEND_SMS_2:
+				if (xQueueReceive(queue_sim808, &last_response, 60000) == pdTRUE)
+				{
+					if (!memcmp(last_response.data, "+CMGS:", 6))
+					{
+						uart_send_data(UART_DEBUG, (uint8_t*)"SMS Enviado!\n\n", strlen("SMS Enviado!\n\n"));
+						status = NEXT;
+					}
+					else
+					{
+						uart_send_data(UART_DEBUG, (uint8_t*)"SMS ERROR\n\n", strlen("SMS ERROR\n\n"));
+						status = NEXT;
+					}
+				}
+				else
+				{
+					uart_send_data(UART_DEBUG, (uint8_t*)"SMS TIMEOUT!\n\n", strlen("SMS TIMEOUT!\n\n"));
+					status = NEXT;
+				}
+				xSemaphoreGive(mutex_sim808);
+				break;
 
 			case NEXT:
-				vTaskDelay(5000 / portTICK_RATE_MS);
+				vTaskDelay(60000 / portTICK_RATE_MS);
+				sms_hold=0;
+				status = READ_SMS;
 				break;
 		}
 	}
@@ -464,7 +518,7 @@ static void task_gps(void * a)
 
 					if (!memcmp(last_response.data, "+CGPSSTATUS: Location 3D Fix", strlen("+CGPSSTATUS: Location 3D Fix")))
 					{
-						uart_send_data(UART_DEBUG, (uint8_t*)"GPS Obtenido!\n", strlen("GPS Obtenido!\n"));
+						uart_send_data(UART_DEBUG, (uint8_t*)"GPS Obtenido!\n\n", strlen("GPS Obtenido!\n\n"));
 						gps_status = ONLINE;
 						status = GET_COORDINATE;
 					}
@@ -478,6 +532,7 @@ static void task_gps(void * a)
 					status = CHECK_SIGNAL;
 				}
 				xSemaphoreGive(mutex_sim808);
+				vTaskDelay(3000 / portTICK_RATE_MS);
 				break;
 
 			case GET_COORDINATE:
@@ -553,6 +608,13 @@ static void task_sim808_receive(void * a)
 				{
 					last_response.data[index++]=data;
 					last_response.size++;
+
+					if (data == '>')
+					{
+						xQueueSend(queue_sim808, &last_response, portMAX_DELAY);
+						index=0;
+						status=0;
+					}
 				}
 				else
 				{
@@ -611,7 +673,7 @@ static void store_phone_number(uint8_t * data)
 {
 	static uint8_t index=0;
 	static uint8_t i=0;
-	static uint8_t phone_number_string[11];
+	static uint32_t phone_number_nvm;
 
 	/* index=1 para que no capture el '+' inicial */
 	index=1;
@@ -621,22 +683,21 @@ static void store_phone_number(uint8_t * data)
 		index++;
 	}
 
-	index+=3;
-
-	for(i=0 ; i<10 ; i++)
+	for(i=0 ; i<13 ; i++)
 	{
-		phone_number_string[i]=data[index];
+		phone_number[i]=data[index];
 		index++;
 	}
 
-	phone_number_string[i]='\0';
+	phone_number[i]='\0';
 
+	uart_send_data(UART_DEBUG, (uint8_t*)"\n", 1);
 	uart_send_data(UART_DEBUG, (uint8_t*)"Numero: ", strlen("Numero: "));
-	uart_send_data(UART_DEBUG, phone_number_string, strlen((char*)phone_number_string));
+	uart_send_data(UART_DEBUG, phone_number, strlen((char*)phone_number));
 	uart_send_data(UART_DEBUG, (uint8_t*)"\n", 1);
 
-	phone_number = strtol((char*)phone_number_string, NULL, 10);
-	nvm_set(NUMBER, phone_number);
+	phone_number_nvm = strtol((char*)(phone_number + 3), NULL, 10);
+	nvm_set(NUMBER, phone_number_nvm);
 }
 
 
@@ -705,6 +766,9 @@ static void store_sms_data(response_t response)
 	sz_radius = strtol((char*)radius_string, NULL, 10);
 	nvm_set(RADIUS, sz_radius);
 
+	sprintf(aux, "Radio: %lu\n", sz_radius);
+	uart_send_data(UART_DEBUG, (uint8_t*)aux, strlen(aux));
+
 	aux_double = strtod((char*)latitude_string, NULL);
 	sz_latitude = aux_double;
 
@@ -717,10 +781,7 @@ static void store_sms_data(response_t response)
 	aux_reg = (uint32_t) aux_double;
 	nvm_set(LATITUDE, aux_reg);
 
-	sprintf(aux, "Lat prog: %lf\n", sz_latitude);
-	uart_send_data(UART_DEBUG, (uint8_t*)aux, strlen(aux));
-
-	sprintf(aux, "Lat NVM: %lu\n", aux_reg);
+	sprintf(aux, "Latitud SZ: %lf\n", sz_latitude);
 	uart_send_data(UART_DEBUG, (uint8_t*)aux, strlen(aux));
 
 	aux_double = strtod((char*)longitude_string, NULL);
@@ -735,10 +796,7 @@ static void store_sms_data(response_t response)
 	aux_reg = (uint32_t) aux_double;
 	nvm_set(LONGITUDE, aux_reg);
 
-	sprintf(aux, "Lon prog: %lf\n", sz_longitude);
-	uart_send_data(UART_DEBUG, (uint8_t*)aux, strlen(aux));
-
-	sprintf(aux, "Lon NVM: %lu\n", aux_reg);
+	sprintf(aux, "Longitud SZ: %lf\n", sz_longitude);
 	uart_send_data(UART_DEBUG, (uint8_t*)aux, strlen(aux));
 
 	device_status = SZ_DATA_LOADED;

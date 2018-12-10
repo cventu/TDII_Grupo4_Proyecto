@@ -17,5 +17,5 @@ typedef struct coordinate_tag
 
 /*********************************PROTOTYPES***********************************/
 uint8_t parse_frame(uint8_t * frame, uint8_t size);
-uint32_t calculate_distance(double lat1, double lon1, double lat2, double lon2);
+double calculate_distance(double lat1, double lon1, double lat2, double lon2);
 /******************************************************************************/

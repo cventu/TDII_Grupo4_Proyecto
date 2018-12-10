@@ -32,7 +32,7 @@ typedef struct coordinate_tag
 /*********************************PROTOTYPES***********************************/
 uint8_t parse_frame(uint8_t * frame, uint8_t size);
 double nmea_deg2double(double deg);
-uint32_t calculate_distance(double lat1, double lon1, double lat2, double lon2);
+double calculate_distance(double lat1, double lon1, double lat2, double lon2);
 /******************************************************************************/
 
 
@@ -154,8 +154,8 @@ uint8_t parse_frame(uint8_t * frame, uint8_t size)
 	return ret;
 }
 
-/*
-uint32_t calculate_distance(double lat1, double lon1, double lat2, double lon2)
+
+double calculate_distance(double lat1, double lon1, double lat2, double lon2)
 {
 	static double pi80;
 	static double r;
@@ -163,6 +163,9 @@ uint32_t calculate_distance(double lat1, double lon1, double lat2, double lon2)
 	static double dlon;
 	static double a;
 	static double c;
+	static double z;
+	static double ret;
+
 
 	pi80 = M_PI / 180;
 	lat1 *= pi80;
@@ -177,22 +180,13 @@ uint32_t calculate_distance(double lat1, double lon1, double lat2, double lon2)
 	a = sin(dlat/2) * sin(dlat/2) + cos(lat1) * cos(lat2) * sin(dlon/2) * sin(dlon/2);
 	c = 2 * atan2(sqrt(a),sqrt(1-a));
 
-	return (r*c)*1000;
-}
-*/
+	z = r*c;
+	ret = z*1000;
 
-uint32_t calculate_distance(double lat1, double long1, double lat2, double long2)
-{
-	uint32_t ret;
-	double dlong = (long2 - long1) * d2r;
-  double dlat = (lat2 - lat1) * d2r;
-  double a = pow(sin(dlat/2.0), 2) + cos(lat1*d2r) * cos(lat2*d2r) * pow(sin(dlong/2.0), 2);
-  double c = 2 * atan2(sqrt(a), sqrt(1-a));
-  double d = 6367 * c;
-
-  ret = (uint32_t)(d*1000);
-  return ret;
+	return ret;
+	//return (r*c)*1000;
 }
+
 
 
 double nmea_deg2double(double deg)
