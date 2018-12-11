@@ -14,7 +14,7 @@
 #include "../inc/UART.h"
 #include "../inc/NVM.h"
 #include "../inc/GPS.h"
-//#include "../inc/ADC.h"
+#include "../inc/ADC.h"
 /******************************************************************************/
 
 
@@ -64,7 +64,7 @@ typedef struct response_tag
 static void initHardware(void);
 void task_rgb(void * a);
 void task_buzzer(void * a);
-//static void task_adc(void * a);
+static void task_adc(void * a);
 static void task_gsm(void * a);
 static void task_sim808_receive(void * a);
 static void task_gps(void * a);
@@ -118,7 +118,7 @@ int main(void)
 	queue_uart_1_rx = xQueueCreate(100, sizeof(uint8_t));
 	queue_uart_2_tx = xQueueCreate(100, sizeof(uint8_t));
 	queue_uart_2_rx = xQueueCreate(100, sizeof(uint8_t));
-	//queue_adc = xQueueCreate(1, sizeof(uint16_t));
+	queue_adc = xQueueCreate(1, sizeof(uint16_t));
 	queue_sim808 = xQueueCreate(5, sizeof(response_t));
 	queue_coordinates = xQueueCreate(1, sizeof(coordinate_t));
 	queue_sms = xQueueCreate(1, sizeof(coordinate_t));
@@ -130,7 +130,7 @@ int main(void)
 
 	xTaskCreate(task_rgb, (const char *)"task_rgb", configMINIMAL_STACK_SIZE*2, 0, tskIDLE_PRIORITY+1, 0);
 	xTaskCreate(task_buzzer, (const char *)"task_buzzer", configMINIMAL_STACK_SIZE*2, 0, tskIDLE_PRIORITY+1, 0);
-	//xTaskCreate(task_adc, (const char *)"task_adc", configMINIMAL_STACK_SIZE*2, 0, tskIDLE_PRIORITY+1, 0);
+	xTaskCreate(task_adc, (const char *)"task_adc", configMINIMAL_STACK_SIZE*2, 0, tskIDLE_PRIORITY+1, 0);
 	xTaskCreate(task_gsm, (const char *)"task_gsm", configMINIMAL_STACK_SIZE*2, 0, tskIDLE_PRIORITY+1, 0);
 	xTaskCreate(task_sim808_receive, (const char *)"task_sim808_receive", configMINIMAL_STACK_SIZE*2, 0, tskIDLE_PRIORITY+1, 0);
 	xTaskCreate(task_gps, (const char *)"task_gps", configMINIMAL_STACK_SIZE*2, 0, tskIDLE_PRIORITY+1, 0);
@@ -175,7 +175,7 @@ static void initHardware(void)
 	uart_cfg.baudrate=9600;
 	uart_init(&uart_cfg);
 
-	//adc_init();
+	adc_init();
 
 	rgb_set(OFF);
 	buzzer_set(BUZZER_OFF);
@@ -653,20 +653,31 @@ static void task_sim808_receive(void * a)
 }
 
 
-/*
 static void task_adc(void * a)
 {
 	static uint16_t data;
 	static char aux[50];
+	static double counts;
+	static double tension;
 
 	while (1)
 	{
+		adc_soc();
+
 		xQueueReceive(queue_adc, &data, portMAX_DELAY);
-		sprintf(aux, "Value: %u\n", data);
+		counts = data;
+		tension = counts * 0.000967441860;
+		sprintf(aux, "Tension: %.2lf V\n", tension);
 		uart_send_data(UART_DEBUG, (uint8_t*)aux, strlen(aux));
+
+		if (tension < 2)
+		{
+			buzzer_set(LOW_BAT);
+		}
+
+		vTaskDelay(5000 / portTICK_RATE_MS);
 	}
 }
-*/
 
 
 static void store_phone_number(uint8_t * data)

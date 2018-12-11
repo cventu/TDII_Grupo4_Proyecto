@@ -60,7 +60,6 @@ void adc_eoc(void);
 
 /*********************************VARIABLES************************************/
 extern xQueueHandle queue_adc;
-uint32_t global;
 /******************************************************************************/
 
 void adc_init(void)
@@ -93,17 +92,11 @@ void ADC_IRQHandler (void)
 	unsigned int valor_adc[7]; // Defino un vector valor_adc para guardar los valores de los registros AD0DRx.
 	volatile uint16_t valor_final_adc;
 
-	global++;
-
 	valor_adc[5] = AD0DR5;					// DODR5 GUARDA EL VALOR DE CUENTA DEL ADC PERTENECIENTE AL  POTENCIOMETRO
 
-	//if((valor_adc[5]>>30) == 0x02)			 // Solamente entro al if si DONE = 1 y OVERRUN = 0.
-	//{										 								 // Cualquier otra combinación, descarto la conversión y espero la siguiente.
-		valor_adc[5] = valor_adc[5] & 0x0000FFF0;
-		valor_final_adc = valor_adc[5]>>4;      // Paso los valores a la variable global valor_final_adc
-		xQueueSendFromISR(queue_adc, &valor_final_adc, &HigherPriorityTaskWoken);
-		//adc_soc();
-	//}
+	valor_adc[5] = valor_adc[5] & 0x0000FFF0;
+	valor_final_adc = valor_adc[5]>>4;      // Paso los valores a la variable global valor_final_adc
+	xQueueSendFromISR(queue_adc, &valor_final_adc, &HigherPriorityTaskWoken);
 
 	portEND_SWITCHING_ISR(HigherPriorityTaskWoken);
 }
